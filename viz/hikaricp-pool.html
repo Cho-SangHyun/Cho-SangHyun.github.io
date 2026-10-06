@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>커넥션 풀 시뮬레이터</title>
+<!--
+  독립 실행되는 도식 예시. 블로그 글에는 <Viz src="/viz/hikaricp-pool.html" /> 로 들어간다.
+  - 외부 의존성 없이 HTML 하나로 동작한다 (다른 라이브러리를 CDN으로 불러와도 된다)
+  - 부모 페이지가 postMessage({ type: 'theme', theme: 'dark' | 'light' })를 보내면 테마를 맞춘다
+  - 단독으로 열면 시스템 다크모드 설정을 따른다
+-->
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --text: #1f2328; --muted: #656d76; --border: #e4e7eb;
+    --idle: #d0d7de; --busy: #2563eb; --queue: #f59e0b; --slow: #dc2626;
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --text: #e6e8eb; --muted: #9aa2ad; --border: #2a2f38;
+    --idle: #2f3540; --busy: #6ea8fe; --queue: #fbbf24; --slow: #f87171;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 14px/1.5 'Pretendard Variable', -apple-system, system-ui, 'Apple SD Gothic Neo', sans-serif;
+  }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px 16px; }
+  label { display: grid; gap: 2px; color: var(--muted); font-size: 12px; }
+  label b { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--busy); }
+  .stage { display: grid; grid-template-columns: 1fr 120px; gap: 12px; margin-top: 14px; }
+  .panel { padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  .panel h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+  .slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(16px, 1fr)); gap: 4px; }
+  .slot { aspect-ratio: 1; border-radius: 3px; background: var(--idle); transition: background .15s; }
+  .slot.busy { background: var(--busy); }
+  .slot.slow { background: var(--slow); }
+  .queue-bar { height: 120px; display: flex; align-items: flex-end; border-radius: 4px; background: var(--idle); overflow: hidden; }
+  .queue-fill { width: 100%; background: var(--queue); transition: height .15s; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+  .stat span { display: block; color: var(--muted); font-size: 11px; }
+  .stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .hint { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+  @media (max-width: 480px) { .stage { grid-template-columns: 1fr; } .queue-bar { height: 24px; } .queue-fill { height: 100% !important; width: var(--w); } }
+</style>
+</head>
+<body>
+  <div class="controls">
+    <label>풀 크기 (maximum-pool-size) <b id="poolOut"></b><input id="pool" type="range" min="1" max="100" value="10" /></label>
+    <label>초당 요청 수 <b id="rateOut"></b><input id="rate" type="range" min="50" max="3000" step="50" value="800" /></label>
+    <label>DB CPU 코어 <b id="coresOut"></b><input id="cores" type="range" min="1" max="16" value="4" /></label>
+  </div>
+
+  <div class="stage">
+    <div class="panel">
+      <h3>커넥션 (파랑 = 사용 중, 빨강 = DB 과부하로 느려진 쿼리)</h3>
+      <div class="slots" id="slots"></div>
+    </div>
+    <div class="panel">
+      <h3>대기 큐</h3>
+      <div class="queue-bar"><div class="queue-fill" id="queueFill"></div></div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span>처리량 (TPS)</span><b id="tps">0</b></div>
+    <div class="stat"><span>평균 응답 (ms)</span><b id="lat">0</b></div>
+    <div class="stat"><span>대기 중 요청</span><b id="waiting">0</b></div>
+  </div>
+  <p class="hint">단순화한 모델입니다. 동시에 실행되는 쿼리가 코어 수의 2배를 넘으면 경합으로 쿼리 시간이 늘어납니다.</p>
+
+<script>
+  // ---- 테마: 부모 페이지 메시지 > 시스템 설정 ----
+  const media = matchMedia('(prefers-color-scheme: dark)');
+  let themeFromParent = null;
+  const applyTheme = () => {
+    document.documentElement.dataset.theme = themeFromParent ?? (media.matches ? 'dark' : 'light');
+  };
+  addEventListener('message', (e) => {
+    if (e.origin !== location.origin || e.data?.type !== 'theme') return;
+    themeFromParent = e.data.theme;
+    applyTheme();
+  });
+  media.addEventListener('change', applyTheme);
+  applyTheme();
+
+  // ---- 시뮬레이션 ----
+  const $ = (id) => document.getElementById(id);
+  const BASE_QUERY_MS = 8;
+  const MAX_QUEUE = 2000;
+  const state = { pool: 0, conns: [], queue: [], done: [], lastT: performance.now() };
+
+  function readInputs() {
+    $('poolOut').textContent = $('pool').value;
+    $('rateOut').textContent = $('rate').value + ' req/s';
+    $('coresOut').textContent = $('cores').value;
+    const pool = Number($('pool').value);
+    if (pool !== state.pool) {
+      state.pool = pool;
+      state.conns = Array.from({ length: pool }, (_, i) => state.conns[i] ?? null);
+      $('slots').replaceChildren(...state.conns.map(() => Object.assign(document.createElement('div'), { className: 'slot' })));
+    }
+  }
+  ['pool', 'rate', 'cores'].forEach((id) => $(id).addEventListener('input', readInputs));
+
+  // 동시 실행 수가 코어×2를 넘으면 초과분에 비례해 쿼리가 느려진다
+  const queryMs = (active, cores) => BASE_QUERY_MS * (1 + Math.max(0, active - cores * 2) / cores);
+
+  // 화면 프레임 속도와 무관하게 1ms 단위 시뮬레이션 시간으로 진행한다.
+  // (탭이 백그라운드라 프레임이 느려져도 결과가 왜곡되지 않도록 한 프레임에 최대 200ms까지만 따라잡는다)
+  const TICK_MS = 1;
+  let simT = 0;
+
+  function tick(rate, cores) {
+    simT += TICK_MS;
+    // 도착: 1ms마다 rate/1000 확률(1 이상이면 그만큼)로 요청 도착
+    let arrivals = (rate * TICK_MS) / 1000;
+    while (arrivals > 0) {
+      if (Math.random() < Math.min(1, arrivals) && state.queue.length < MAX_QUEUE) state.queue.push(simT);
+      arrivals -= 1;
+    }
+    // 완료 처리
+    for (let i = 0; i < state.conns.length; i++) {
+      const c = state.conns[i];
+      if (c && simT >= c.end) {
+        state.done.push({ at: simT, latency: simT - c.arrived });
+        state.conns[i] = null;
+      }
+    }
+    // 빈 커넥션에 대기 요청 배정. 쿼리 시간은 현재 동시 실행 수에 따라 달라진다.
+    let active = state.conns.reduce((n, c) => n + (c ? 1 : 0), 0);
+    for (let i = 0; i < state.conns.length && state.queue.length > 0; i++) {
+      if (state.conns[i]) continue;
+      active++;
+      const ms = queryMs(active, cores);
+      state.conns[i] = { arrived: state.queue.shift(), end: simT + ms * (0.6 + Math.random() * 0.8), slow: ms > BASE_QUERY_MS * 1.5 };
+    }
+  }
+
+  function step(now) {
+    const elapsed = Math.min(200, now - state.lastT);
+    state.lastT = now;
+    const rate = Number($('rate').value);
+    const cores = Number($('cores').value);
+    for (let t = 0; t < elapsed; t += TICK_MS) tick(rate, cores);
+
+    // 최근 1초(시뮬레이션 시간) 동안 완료된 요청으로 TPS·평균 응답 계산
+    while (state.done.length && simT - state.done[0].at >= 1000) state.done.shift();
+    render();
+    requestAnimationFrame(step);
+  }
+
+  function render() {
+    const slots = $('slots').children;
+    state.conns.forEach((c, i) => { slots[i].className = 'slot' + (c ? (c.slow ? ' slow' : ' busy') : ''); });
+    const pct = Math.min(100, (state.queue.length / 300) * 100);
+    $('queueFill').style.height = pct + '%';
+    $('queueFill').style.setProperty('--w', pct + '%');
+    $('tps').textContent = state.done.length.toLocaleString();
+    const avg = state.done.reduce((s, d) => s + d.latency, 0) / (state.done.length || 1);
+    $('lat').textContent = Math.round(avg).toLocaleString();
+    $('waiting').textContent = state.queue.length.toLocaleString() + (state.queue.length >= MAX_QUEUE ? '+' : '');
+  }
+
+  readInputs();
+  requestAnimationFrame(step);
+</script>
+</body>
+</html>
