@@ -8,14 +8,14 @@ Cho SangHyun의 개인 기술 블로그. 글은 한국어로 쓰인다.
 - TIL: 짧은 메모
 
 ## Posts
-- [블로그를 MDX로 쓰기로 한 이유](https://cho-sanghyun.github.io/posts/why-i-write-mdx/): 글 안에 움직이는 도식을 넣고 싶어서 MDX를 고른 이야기
-- [HikariCP 커넥션 풀 크기, 정말 클수록 좋을까](https://cho-sanghyun.github.io/posts/hikaricp-pool-size-experiment/): 풀 크기를 10에서 100까지 바꿔 가며 처리량과 지연 시간을 측정해 본 실험 기록
+- [블로그를 MDX로 쓰기로 한 이유](https://chosanghyun.dev/posts/why-i-write-mdx/): 글 안에 움직이는 도식을 넣고 싶어서 MDX를 고른 이야기
+- [HikariCP 커넥션 풀 크기, 정말 클수록 좋을까](https://chosanghyun.dev/posts/hikaricp-pool-size-experiment/): 풀 크기를 10에서 100까지 바꿔 가며 처리량과 지연 시간을 측정해 본 실험 기록
 
 ## Wiki
-- [G1 GC](https://cho-sanghyun.github.io/wiki/jvm/gc/g1/): Region 기반으로 힙을 나눠 정지 시간 목표를 맞추는 G1 GC의 동작 정리
-- [인덱스 기초](https://cho-sanghyun.github.io/wiki/database/index-basics/): B-Tree 인덱스의 구조와 복합 인덱스 컬럼 순서를 정하는 기준
+- [G1 GC](https://chosanghyun.dev/wiki/jvm/gc/g1/): Region 기반으로 힙을 나눠 정지 시간 목표를 맞추는 G1 GC의 동작 정리
+- [인덱스 기초](https://chosanghyun.dev/wiki/database/index-basics/): B-Tree 인덱스의 구조와 복합 인덱스 컬럼 순서를 정하는 기준
 
 ## Optional
 
-- [EXPLAIN (ANALYZE, BUFFERS)](https://cho-sanghyun.github.io/til/postgres-explain-buffers/)
-- [git commit --fixup 으로 리뷰 반영 커밋 정리하기](https://cho-sanghyun.github.io/til/git-commit-fixup/)
+- [EXPLAIN (ANALYZE, BUFFERS)](https://chosanghyun.dev/til/postgres-explain-buffers/)
+- [git commit --fixup 으로 리뷰 반영 커밋 정리하기](https://chosanghyun.dev/til/git-commit-fixup/)

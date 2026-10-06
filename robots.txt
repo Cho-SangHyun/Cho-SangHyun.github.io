@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://cho-sanghyun.github.io/sitemap-index.xml
+Sitemap: https://chosanghyun.dev/sitemap-index.xml
